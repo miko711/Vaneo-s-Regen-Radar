@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+    <!-- iOS PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Regen Radar">
+    <meta name="theme-color" content="#0f172a">
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+
+    <title>Vaneo's Regen Radar</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+        }
+        .header {
+            text-align: center;
+            padding: 20px 0 10px;
+        }
+        .header h1 {
+            font-size: 1.4rem;
+            background: linear-gradient(90deg, #60a5fa, #34d399);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .header p { font-size: 0.8rem; color: #94a3b8; margin-top: 4px; }
+
+        .controls {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin: 12px 0;
+        }
+        .btn {
+            background: #334155;
+            border: 1px solid #475569;
+            color: #e2e8f0;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .btn.active {
+            background: #3b82f6;
+            border-color: #60a5fa;
+        }
+        .btn:active { transform: scale(0.95); }
+
+        .chart-container {
+            background: rgba(30, 41, 59, 0.8);
+            border-radius: 16px;
+            padding: 12px;
+            margin: 12px 0;
+            border: 1px solid #334155;
+            position: relative;
+            height: 320px;
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin: 12px 0;
+        }
+        .stat-box {
+            background: rgba(30, 41, 59, 0.8);
+            border-radius: 12px;
+            padding: 12px;
+            text-align: center;
+            border: 1px solid #334155;
+        }
+        .stat-box .label { font-size: 0.7rem; color: #94a3b8; text-transform: uppercase; }
+        .stat-box .value { font-size: 1.3rem; font-weight: 700; margin-top: 4px; }
+        .stat-box .unit { font-size: 0.75rem; color: #64748b; }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #94a3b8;
+        }
+        .spinner {
+            width: 32px; height: 32px;
+            border: 3px solid #334155;
+            border-top-color: #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 12px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .error-box {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 12px 0;
+            text-align: center;
+            color: #fca5a5;
+            font-size: 0.85rem;
+        }
+        .error-box button {
+            margin-top: 8px;
+            background: #ef4444;
+            border: none;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 16px;
+            font-size: 0.8rem;
+        }
+
+        .install-hint {
+            background: linear-gradient(90deg, #059669, #10b981);
+            border-radius: 12px;
+            padding: 12px 16px;
+            margin: 12px 0;
+            font-size: 0.8rem;
+            text-align: center;
+            display: none;
+        }
+        .install-hint.show { display: block; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🌧️ Vaneo's Regen Radar</h1>
+        <p>Live neerslagdata — historie &amp; verwachting per uur</p>
+    </div>
+
+    <div class="install-hint" id="installHint">
+        💡 <strong>Tip:</strong> Tik op <strong>Delen</strong> (vierkantje met pijl) en kies <strong>"Zet op beginscherm"</strong> om deze app te installeren!
+    </div>
+
+    <div class="controls">
+        <button class="btn active" onclick="setLocation('paramaribo')">Paramaribo</button>
+        <button class="btn" onclick="setLocation('commewijne')">Commewijne</button>
+        <button class="btn" onclick="setLocation('nickerie')">Nickerie</button>
+    </div>
+
+    <div class="controls">
+        <button class="btn active" id="btnForecast" onclick="setMode('forecast')">Verwachting</button>
+        <button class="btn" id="btnHistory" onclick="setMode('history')">Afgelopen 24u</button>
+    </div>
+
+    <div id="content">
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Neerslagdata laden...</p>
+        </div>
+    </div>
+
+    <script>
+        // ===== CONFIG =====
+        const locations = {
+            paramaribo: { lat: 5.8394, lon: -55.1994, name: 'Paramaribo' },
+            commewijne: { lat: 5.8, lon: -54.9, name: 'Commewijne' },
+            nickerie:   { lat: 5.9667, lon: -57.0833, name: 'Nickerie' }
+        };
+
+        let currentLoc = 'paramaribo';
+        let currentMode = 'forecast';
+        let chart = null;
+
+        // ===== SERVICE WORKER REGISTRATIE =====
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js')
+                .then(() => console.log('Service Worker geregistreerd'))
+                .catch(err => console.log('SW registratie mislukt:', err));
+        }
+
+        // ===== INSTALL HINT =====
+        // Toon hint als app NIET als standalone draait
+        if (window.matchMedia('(display-mode: standalone)').matches === false && 
+            navigator.standalone !== true) {
+            document.getElementById('installHint').classList.add('show');
+        }
+
+        // ===== FUNCTIES =====
+        function setLocation(loc) {
+            currentLoc = loc;
+            document.querySelectorAll('.controls:first-of-type .btn').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            loadData();
+        }
+
+        function setMode(mode) {
+            currentMode = mode;
+            document.getElementById('btnForecast').classList.toggle('active', mode === 'forecast');
+            document.getElementById('btnHistory').classList.toggle('active', mode === 'history');
+            loadData();
+        }
+
+        async function loadData() {
+            const content = document.getElementById('content');
+            content.innerHTML = '<div class="loading"><div class="spinner"></div><p>Neerslagdata laden...</p></div>';
+
+            const loc = locations[currentLoc];
+            const now = new Date();
+
+            try {
+                let url, isHistory = false;
+
+                if (currentMode === 'forecast') {
+                    url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&hourly=precipitation&forecast_days=3&timezone=America%2FParamaribo`;
+                } else {
+                    const end = now.toISOString().slice(0, 16);
+                    const start = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+                    url = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&hourly=precipitation&start_date=${start.slice(0,10)}&end_date=${end.slice(0,10)}&timezone=America%2FParamaribo`;
+                    isHistory = true;
+                }
+
+                const response = await fetch(url);
+                if (!response.ok) throw new Error('API fout: ' + response.status);
+                const data = await response.json();
+
+                renderChart(data.hourly, loc.name, isHistory);
+
+            } catch (err) {
+                content.innerHTML = `
+                    <div class="error-box">
+                        <strong>⚠️ Data kon niet geladen worden</strong><br>
+                        ${err.message}<br>
+                        <button onclick="loadData()">Opnieuw proberen</button>
+                    </div>
+                `;
+            }
+        }
+
+        function renderChart(hourly, locName, isHistory) {
+            const times = hourly.time.map(t => {
+                const d = new Date(t);
+                return d.getHours().toString().padStart(2, '0') + ':00';
+            });
+            const rain = hourly.precipitation;
+
+            // Stats
+            const maxRain = Math.max(...rain);
+            const totalRain = rain.reduce((a, b) => a + b, 0);
+            const avgRain = totalRain / rain.length;
+
+            // Y-as max dynamisch
+            const yMax = Math.max(10, Math.ceil(maxRain * 1.2));
+
+            const content = document.getElementById('content');
+            content.innerHTML = `
+                <div class="stats">
+                    <div class="stat-box">
+                        <div class="label">Max</div>
+                        <div class="value" style="color:#60a5fa">${maxRain.toFixed(1)}</div>
+                        <div class="unit">mm/uur</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="label">Totaal</div>
+                        <div class="value" style="color:#34d399">${totalRain.toFixed(1)}</div>
+                        <div class="unit">mm</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="label">Gemiddeld</div>
+                        <div class="value" style="color:#fbbf24">${avgRain.toFixed(1)}</div>
+                        <div class="unit">mm/uur</div>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="rainChart"></canvas>
+                </div>
+            `;
+
+            const ctx = document.getElementById('rainChart').getContext('2d');
+
+            if (chart) chart.destroy();
+
+            // Kleurverloop gebaseerd op neerslagintensiteit
+            const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, 'rgba(59, 130, 246, 0.8)');
+            gradient.addColorStop(1, 'rgba(59, 130, 246, 0.1)');
+
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: times,
+                    datasets: [{
+                        label: 'Neerslag (mm/uur)',
+                        data: rain,
+                        borderColor: '#60a5fa',
+                        backgroundColor: gradient,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 2,
+                        pointHoverRadius: 5,
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                            titleColor: '#e2e8f0',
+                            bodyColor: '#94a3b8',
+                            borderColor: '#334155',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: (ctx) => ` ${ctx.parsed.y.toFixed(1)} mm/uur`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                            ticks: { 
+                                color: '#94a3b8', 
+                                font: { size: 10 },
+                                maxTicksLimit: 12
+                            }
+                        },
+                        y: {
+                            min: 0,
+                            max: yMax,
+                            grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                            ticks: { 
+                                color: '#94a3b8', 
+                                font: { size: 10 },
+                                callback: (v) => v + ' mm'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Start
+        loadData();
+    </script>
+</body>
+</html>
